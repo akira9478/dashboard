@@ -13,6 +13,8 @@ export function useVercelTools() {
     const targetUrl = siteConfig.vercelApi.endpoint || "https://vercel.app";
 
     fetch(targetUrl, {
+      method: "GET",
+      mode: "cors", // 👈 強制瀏覽器進入標準 CORS 模式
       headers: {
         'Accept': 'application/json'
       }
