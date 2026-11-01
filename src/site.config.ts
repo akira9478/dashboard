@@ -114,7 +114,7 @@ export const siteConfig: SiteConfig = {
 
   // ── Vercel API 與預設作品清單 (完全相容指定 JSON 規格) ──
   vercelApi: {
-    endpoint: "https://dashboard-chi-five-14.vercel.app/api/get-portfolio",
+    endpoint: "https://akira9478-dashboard-api.vercel.app/api/get-portfolio",
     defaultTools: [
       // {
       //   id: 1,
