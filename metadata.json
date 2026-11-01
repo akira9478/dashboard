@@ -1,0 +1,6 @@
+{
+  "name": "個人作品集與工具箱 - GitHub Pages Hub",
+  "description": "個人頁面與工具/作品集展示空間，整合 Vercel API 清單、開源專案與技術部落格的響應式展示平台。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
