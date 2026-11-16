@@ -23,16 +23,16 @@ export const Footer: React.FC = () => {
 
           <div className="flex items-center gap-6">
             <a href="#bio" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
-              關於我
+              自介與技能
+            </a>
+            <a href="#experience" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
+              經歷與學歷
             </a>
             <a href="#tools" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
-              作品清單
+              工具與作品
             </a>
-            <a href="#opensource" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
-              開源專案
-            </a>
-            <a href="#blog" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
-              技術文章
+            <a href="#photos" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
+              攝影作品
             </a>
           </div>
 

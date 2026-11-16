@@ -6,30 +6,33 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from './utils/theme';
 import { useVercelTools } from './hooks/useVercelTools';
+import { useVercelPhotos } from './hooks/useVercelPhotos';
 import { siteConfig } from './site.config';
 import { ToolItem } from './types';
 
 import { Navbar, PageId, PAGE_TABS } from './components/Navbar';
 import { BioAndPhilosophyPage } from './components/BioAndPhilosophyPage';
+import { ExperienceSection } from './components/ExperienceSection';
 import { ToolsShowcase } from './components/ToolsShowcase';
-import { OpenSourceSection } from './components/OpenSourceSection';
-import { BlogSection } from './components/BlogSection';
+import { PhotoGallerySection } from './components/PhotoGallerySection';
 import { ToolDetailModal } from './components/ToolDetailModal';
 import { Footer } from './components/Footer';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-const PAGE_IDS: PageId[] = ['bio', 'tools', 'opensource', 'blog'];
+const PAGE_IDS: PageId[] = ['bio', 'experience', 'tools', 'photos'];
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
-  const { tools, categoriesWithTools, isLoading } = useVercelTools();
+  const { categoriesWithTools, isLoading } = useVercelTools();
+  const { photos, isLoading: isPhotosLoading } = useVercelPhotos();
   const [selectedTool, setSelectedTool] = useState<ToolItem | null>(null);
+  const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState<boolean>(false);
 
   // 當前活躍頁面狀態
   const [activePage, setActivePage] = useState<PageId>(() => {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash.replace('#', '').toLowerCase();
-      if (hash === 'about' || hash === 'philosophy') return 'bio';
+      if (hash === 'about' || hash === 'skills') return 'bio';
       if (PAGE_IDS.includes(hash as PageId)) return hash as PageId;
     }
     return 'bio';
@@ -62,7 +65,7 @@ export default function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#', '').toLowerCase();
-      if (hash === 'about' || hash === 'philosophy') {
+      if (hash === 'about' || hash === 'skills') {
         setActivePage('bio');
       } else if (PAGE_IDS.includes(hash as PageId)) {
         setActivePage(hash as PageId);
@@ -76,8 +79,8 @@ export default function App() {
   // 支援鍵盤左右方向鍵切換分頁 (ArrowLeft / ArrowRight)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 若開啟了彈窗或在輸入框中打字，不觸發切換
-      if (selectedTool) return;
+      // 若開啟了作品詳情彈窗、照片燈箱，或在輸入框中打字，不觸發分頁切換
+      if (selectedTool || isPhotoLightboxOpen) return;
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
 
@@ -90,18 +93,20 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goToNextPage, goToPrevPage, selectedTool]);
+  }, [goToNextPage, goToPrevPage, selectedTool, isPhotoLightboxOpen]);
 
   // 支援行動端觸控左右滑動手勢 (Swipe Gesture)
   const touchStartXRef = useRef<number | null>(null);
   const touchStartYRef = useRef<number | null>(null);
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (selectedTool || isPhotoLightboxOpen) return;
     touchStartXRef.current = e.touches[0].clientX;
     touchStartYRef.current = e.touches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (selectedTool || isPhotoLightboxOpen) return;
     if (touchStartXRef.current === null || touchStartYRef.current === null) return;
 
     const touchEndX = e.changedTouches[0].clientX;
@@ -175,16 +180,23 @@ export default function App() {
           className="flex w-[400%] transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
           style={{ transform: `translateX(-${activeIndex * 25}%)` }}
         >
-          {/* 第 1 頁：自介與哲學 (Bio & Philosophy) */}
+          {/* 第 1 頁：自介與技能 (Bio & Skills) */}
           <div className="w-[25%] shrink-0">
             <BioAndPhilosophyPage
-              totalToolsCount={tools.length}
-              openSourceCount={siteConfig.openSourceRepos.length}
+              onGoToExperience={() => goToPage('experience')}
               onGoToTools={() => goToPage('tools')}
             />
           </div>
 
-          {/* 第 2 頁：工具清單與作品集 (Tools & Works) */}
+          {/* 第 2 頁：經歷與學歷 (Experience & Education) */}
+          <div className="w-[25%] shrink-0">
+            <ExperienceSection
+              experiences={siteConfig.experiences}
+              education={siteConfig.education}
+            />
+          </div>
+
+          {/* 第 3 頁：工具與作品集 (Tools & Works) */}
           <div className="w-[25%] shrink-0">
             <ToolsShowcase
               categoriesWithTools={categoriesWithTools}
@@ -193,14 +205,13 @@ export default function App() {
             />
           </div>
 
-          {/* 第 3 頁：開源專案 (Open Source) */}
+          {/* 第 4 頁：攝影作品展示區 (Google Drive Photography) */}
           <div className="w-[25%] shrink-0">
-            <OpenSourceSection repos={siteConfig.openSourceRepos} />
-          </div>
-
-          {/* 第 4 頁：技術文章 (Blog & Notes) */}
-          <div className="w-[25%] shrink-0">
-            <BlogSection posts={siteConfig.blogPosts} />
+            <PhotoGallerySection
+              photos={photos}
+              isLoading={isPhotosLoading}
+              onModalStateChange={setIsPhotoLightboxOpen}
+            />
           </div>
         </div>
       </main>

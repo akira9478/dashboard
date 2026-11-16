@@ -3,7 +3,7 @@ import { Sun, Moon, Github, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Theme } from '../utils/theme';
 import { siteConfig } from '../site.config';
 
-export type PageId = 'bio' | 'tools' | 'opensource' | 'blog';
+export type PageId = 'bio' | 'experience' | 'tools' | 'photos';
 
 export interface PageTab {
   id: PageId;
@@ -12,10 +12,10 @@ export interface PageTab {
 }
 
 export const PAGE_TABS: PageTab[] = [
-  { id: 'bio', label: '自介與哲學', index: '01' },
-  { id: 'tools', label: '工具與作品', index: '02' },
-  { id: 'opensource', label: '開源專案', index: '03' },
-  { id: 'blog', label: '技術文章', index: '04' },
+  { id: 'bio', label: '自介與技能', index: '01' },
+  { id: 'experience', label: '經歷與學歷', index: '02' },
+  { id: 'tools', label: '工具與作品', index: '03' },
+  { id: 'photos', label: '攝影作品', index: '04' },
 ];
 
 interface NavbarProps {

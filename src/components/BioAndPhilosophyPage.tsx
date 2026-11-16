@@ -1,20 +1,25 @@
-import React from 'react';
-import { Github, Mail, MapPin, Terminal, ArrowRight, Cpu, ShieldCheck, Code } from 'lucide-react';
+import React, { useState } from 'react';
+import { Github, Mail, MapPin, Terminal, ArrowRight, Code2, Wrench, Server, Cpu, Sparkles, Globe, Briefcase } from 'lucide-react';
 import { siteConfig } from '../site.config';
 
 interface BioAndPhilosophyPageProps {
-  totalToolsCount: number;
-  openSourceCount: number;
+  onGoToExperience: () => void;
   onGoToTools: () => void;
 }
 
 export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
-  totalToolsCount,
-  openSourceCount,
+  onGoToExperience,
   onGoToTools,
 }) => {
-  const { profile, philosophy } = siteConfig;
-  const icons = [Cpu, ShieldCheck, Code];
+  const { profile, skillGroups } = siteConfig;
+  const [avatarError, setAvatarError] = useState(false);
+
+  const categoryIcons = [Code2, Wrench, Server, Cpu, Sparkles, Globe];
+
+  // 自動取得 GitHub 頭像網址 (若 profile.avatarUrl 未填則自動由 githubUrl 推導)
+  const resolvedAvatarUrl =
+    profile.avatarUrl ||
+    (profile.githubUrl ? `${profile.githubUrl.replace(/\/$/, '')}.png` : undefined);
 
   return (
     <div className="py-12 md:py-20 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-20 md:space-y-28">
@@ -26,21 +31,22 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
           {/* Left Column: Avatar & Quick Info Card */}
           <div className="lg:col-span-4 space-y-6">
             
-            {/* Minimalist Profile Picture Frame */}
+            {/* Minimalist Profile Picture Frame (GitHub Avatar) */}
             <div className="relative group">
               <div className="w-36 h-36 md:w-44 md:h-44 rounded-2xl bg-slate-900 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 p-1.5 shadow-sm overflow-hidden flex items-center justify-center">
-                {profile.avatarUrl ? (
+                {resolvedAvatarUrl && !avatarError ? (
                   <img
-                    src={profile.avatarUrl}
+                    src={resolvedAvatarUrl}
                     alt={profile.name}
+                    onError={() => setAvatarError(true)}
                     className="w-full h-full object-cover rounded-xl"
                   />
                 ) : (
                   <div className="w-full h-full rounded-xl bg-slate-100 dark:bg-slate-900 flex flex-col items-center justify-center text-slate-700 dark:text-slate-300 relative select-none">
                     <div className="text-4xl md:text-5xl font-mono font-bold tracking-tighter text-slate-900 dark:text-slate-100">
-                      {profile.avatarInitial || 'A'}<span className="text-emerald-500">.</span>
+                      {profile.avatarInitial || 'F'}<span className="text-emerald-500">.</span>
                     </div>
-                    <span className="text-[11px] font-mono text-slate-400 mt-1 uppercase tracking-widest">
+                    <span className="text-[11px] font-mono text-slate-400 mt-1 tracking-widest">
                       {profile.name}
                     </span>
                   </div>
@@ -63,7 +69,11 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
                 {profile.shortBio}
               </p>
               
-              <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-1.5">
+              <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Briefcase className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>{profile.role}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>{profile.location}</span>
@@ -119,7 +129,7 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               {profile.highlights.map((item, index) => (
                 <div key={index} className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-                  <div className="text-xs font-mono text-slate-500 dark:text-slate-400">{item.index}</div>
+                  <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400">{item.index}</div>
                   <div className="text-base font-bold text-slate-900 dark:text-slate-100">
                     {item.title}
                   </div>
@@ -130,19 +140,22 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
               ))}
             </div>
 
-            {/* Quick jump to tools */}
-            <div className="pt-2 flex items-center gap-4">
+            {/* Quick jump buttons */}
+            <div className="pt-2 flex flex-wrap items-center gap-3">
               <button
-                onClick={onGoToTools}
+                onClick={onGoToExperience}
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-slate-900 text-white dark:bg-emerald-600 dark:text-white hover:bg-slate-800 dark:hover:bg-emerald-500 transition-colors cursor-pointer shadow-xs"
               >
-                <span>進入第二頁：作品與工具清單</span>
+                <span>查看工作經歷與學歷</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
 
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                可使用滑動或左右方向鍵切換
-              </span>
+              <button
+                onClick={onGoToTools}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+              >
+                <span>瀏覽作品與工具清單</span>
+              </button>
             </div>
 
           </div>
@@ -150,35 +163,57 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
         </div>
       </section>
 
-      {/* ── 第二部分：工程哲學與開發日常 (Philosophy) ── */}
-      <section id="philosophy" className="pt-12 border-t border-slate-200 dark:border-slate-800 space-y-10">
+      {/* ── 第二部分：專業技能與技術棧 (Skills & Tech Stack) ── */}
+      <section id="skills" className="pt-12 border-t border-slate-200 dark:border-slate-800 space-y-10">
         <div>
           <div className="text-xs font-mono tracking-wider text-emerald-600 dark:text-emerald-400 uppercase mb-2">
-            Engineering & Design Principles
+            Technical Skills & Stack
           </div>
           <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            工程哲學與開發心態
+            專業技能與技術棧
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mt-2 max-w-xl leading-relaxed">
-            熱愛現代 Web 技術與開源生態，致力於打造輕巧且不浪費運算資源的數位工具。
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-2 max-w-2xl leading-relaxed">
+            涵蓋現代化前端框架、工程化與單元測試、後端開發、DevOps 容器化基建，以及 AI Agent 輔助開發與敏捷協作。
           </p>
         </div>
 
-        {/* 3-Column Principles Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {philosophy.map((item, index) => {
-            const Icon = icons[index % icons.length];
+        {/* 3-Column Skills Bento Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {skillGroups.map((group, index) => {
+            const Icon = categoryIcons[index % categoryIcons.length];
             return (
-              <div key={index} className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
-                <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 flex items-center justify-center">
-                  <Icon className="w-5 h-5" />
+              <div
+                key={group.category}
+                className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between space-y-5"
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 flex items-center justify-center shrink-0">
+                        <Icon className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                          {group.category}
+                        </h3>
+                        <div className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+                          {group.subtitle}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {group.items.map((skill) => (
+                      <span
+                        key={skill}
+                        className="px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/70 text-xs font-medium text-slate-800 dark:text-slate-200 transition-colors hover:border-emerald-500/40"
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                  {item.title}
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                  {item.description}
-                </p>
               </div>
             );
           })}
@@ -188,10 +223,10 @@ export const BioAndPhilosophyPage: React.FC<BioAndPhilosophyPageProps> = ({
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-6 md:p-8 flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="space-y-1 text-center sm:text-left">
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-              有工具想法或合作交流機會？
+              有技術交流或合作機會？
             </h3>
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-              歡迎隨時透過 Email 或 GitHub 與我交流！
+              歡迎隨時透過 Email ({profile.email}) 或 GitHub 與我聯繫！
             </p>
           </div>
 

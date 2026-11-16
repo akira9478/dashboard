@@ -28,11 +28,6 @@ export const ToolsShowcase: React.FC<ToolsShowcaseProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // 防呆：若完全沒有任何分類資料，直接安全隱藏或維持乾淨
-  if (!isLoading && categoriesWithTools.length === 0) {
-    return null;
-  }
-
   return (
     <section id="tools" className="py-12 md:py-20">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -49,6 +44,20 @@ export const ToolsShowcase: React.FC<ToolsShowcaseProps> = ({
             依功能領域分類呈現的個人線上工具與專案作品，點擊即可直達服務。
           </p>
         </div>
+
+        {isLoading && categoriesWithTools.length === 0 && (
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 p-12 text-center text-sm text-slate-500 dark:text-slate-400 font-mono">
+            正在從 Vercel 同步作品清單...
+          </div>
+        )}
+
+        {!isLoading && categoriesWithTools.length === 0 && (
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 p-12 text-center">
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              作品集整理更新中
+            </div>
+          </div>
+        )}
 
         {/* Categorized Lists (主要是針對分類顯示就好，若該分類無資料就不顯示) */}
         <div className="space-y-20">
