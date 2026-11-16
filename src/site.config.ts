@@ -231,9 +231,16 @@ export const siteConfig: SiteConfig = {
     defaultTools: []
   },
 
-  // ── 5. 攝影作品 Vercel API 與預設清單 ──
+  // ── 5. 攝影分享 Vercel API 與預設清單 ──
   photosApi: {
     endpoint: "https://akira9478-dashboard-api.vercel.app/api/get-photos",
-    defaultPhotos: []
+    defaultPhotos: [
+      {
+        id: "default-preview-1",
+        title: "預設預覽",
+        driveUrlOrId: "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?auto=format&fit=crop&w=1400&q=80",
+        category: "預設相簿"
+      }
+    ]
   }
 };

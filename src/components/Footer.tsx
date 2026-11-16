@@ -32,7 +32,7 @@ export const Footer: React.FC = () => {
               工具與作品
             </a>
             <a href="#photos" className="hover:text-slate-900 dark:hover:text-slate-100 transition-colors">
-              攝影作品
+              攝影分享
             </a>
           </div>
 

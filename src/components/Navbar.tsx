@@ -15,7 +15,7 @@ export const PAGE_TABS: PageTab[] = [
   { id: 'bio', label: '自介與技能', index: '01' },
   { id: 'experience', label: '經歷與學歷', index: '02' },
   { id: 'tools', label: '工具與作品', index: '03' },
-  { id: 'photos', label: '攝影作品', index: '04' },
+  { id: 'photos', label: '攝影分享', index: '04' },
 ];
 
 interface NavbarProps {
