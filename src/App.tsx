@@ -175,7 +175,7 @@ export default function App() {
       </div>
 
       {/* 主內容區：流暢的橫向滑動 Track */}
-      <main className="flex-1 w-full overflow-hidden">
+      <main className="flex-1 w-full overflow-x-clip">
         <div 
           className="flex w-[400%] transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
           style={{ transform: `translateX(-${activeIndex * 25}%)` }}

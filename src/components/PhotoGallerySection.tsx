@@ -125,6 +125,119 @@ export function getPhotoUrlByStage(
   };
 }
 
+/**
+ * 獨立 Memoized 單張相片元件：
+ * 1. 自身管理 loaded 與 retryStage，避免單張圖載入完成時觸發整個相簿重繪 (解決滑動閃爍的主因之一)
+ * 2. 不使用 h-0 切換高度與 transition-all，避免捲動時瀏覽器不斷重新計算高度造成閃爍
+ */
+interface PhotoCardProps {
+  photo: PhotoItem;
+  onClick: () => void;
+}
+
+const PhotoCard: React.FC<PhotoCardProps> = React.memo(({ photo, onClick }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [stage, setStage] = useState(0);
+
+  const resolved = useMemo(() => getPhotoUrlByStage(photo, 'grid', stage), [photo, stage]);
+
+  const handleError = () => {
+    setStage((prev) => {
+      if (prev >= 3) {
+        setIsLoaded(true);
+        return prev;
+      }
+      return prev + 1;
+    });
+  };
+
+  return (
+    <div
+      onClick={onClick}
+      className="group relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-900 cursor-zoom-in shadow-2xs hover:shadow-md transition-shadow"
+      style={{
+        // 未載入完成前給予穩定最小高度，載入後自然貼合圖片比例，不做高度動畫
+        minHeight: isLoaded ? undefined : '220px',
+      }}
+    >
+      {/* 載入中骨架遮罩 (覆蓋於底層，圖片載入完成後直接移除，不改變 DOM 結構順序) */}
+      {!isLoaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-100 dark:bg-slate-900 animate-pulse z-10 pointer-events-none">
+          <Loader2 className="w-5 h-5 text-emerald-500/70 animate-spin" />
+          <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+            載入中...
+          </span>
+        </div>
+      )}
+
+      <img
+        src={resolved.url}
+        alt={photo.title || '攝影作品'}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onLoad={() => setIsLoaded(true)}
+        onError={handleError}
+        className={`w-full h-auto block object-cover transform-gpu group-hover:scale-[1.03] transition-opacity duration-300 ease-out ${
+          isLoaded ? 'opacity-100' : 'opacity-0'
+        }`}
+      />
+
+      {/* 滑鼠移上去時顯示標題與說明 (Hover Overlay) */}
+      <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-4 pointer-events-none">
+        <div className="flex items-end justify-between gap-3">
+          <div className="space-y-1 min-w-0">
+            {photo.title && (
+              <div className="text-sm font-bold text-white truncate">
+                {photo.title}
+              </div>
+            )}
+            {photo.description && (
+              <p className="text-xs text-slate-200/95 line-clamp-3 leading-relaxed">
+                {photo.description}
+              </p>
+            )}
+            {!photo.title && !photo.description && (
+              <span className="text-xs font-medium text-white/90">
+                {photo.category || '點擊放大檢視'}
+              </span>
+            )}
+          </div>
+
+          <span className="p-2 rounded-xl bg-slate-900/70 text-white backdrop-blur-xs shrink-0">
+            <Maximize2 className="w-3.5 h-3.5" />
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/**
+ * 根據螢幕寬度計算瀑布流欄數 (1 / 2 / 3 欄)
+ * 使用固定獨立直欄取代 CSS `columns-3`，徹底解決向下滑動時因圖片載入導致跨欄重排與閃爍的問題
+ */
+function useWaterfallColumnsCount(): number {
+  const [cols, setCols] = useState<number>(() => {
+    if (typeof window === 'undefined') return 3;
+    if (window.innerWidth < 640) return 1;
+    if (window.innerWidth < 768) return 2;
+    return 3;
+  });
+
+  useEffect(() => {
+    const updateCols = () => {
+      const w = window.innerWidth;
+      const next = w < 640 ? 1 : w < 768 ? 2 : 3;
+      setCols((prev) => (prev === next ? prev : next));
+    };
+    window.addEventListener('resize', updateCols);
+    return () => window.removeEventListener('resize', updateCols);
+  }, []);
+
+  return cols;
+}
+
 export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
   photos,
   isLoading = false,
@@ -133,10 +246,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
   // 每個相簿分類目前已展開顯示的張數
   const [expandedCountMap, setExpandedCountMap] = useState<Record<string, number>>({});
-  // 單張圖片是否已載入完成 (避免未載入前高度塌陷或突兀跳出)
-  const [loadedMap, setLoadedMap] = useState<Record<string | number, boolean>>({});
-  // 記錄每張照片的重試階段 (0 -> 1 -> 2 -> 3 預設預覽圖)
-  const [retryStageMap, setRetryStageMap] = useState<Record<string | number, number>>({});
+  const columnsCount = useWaterfallColumnsCount();
 
   // Lightbox 狀態：紀錄當前預覽的照片清單與索引
   const [lightboxState, setLightboxState] = useState<{
@@ -144,6 +254,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
     index: number;
   } | null>(null);
   const [lightboxImgLoaded, setLightboxImgLoaded] = useState<boolean>(false);
+  const [lightboxRetryStage, setLightboxRetryStage] = useState<number>(0);
 
   // 當完全沒有照片且非載入中時，提供一張預設的簡單預覽圖
   const displayPhotos = useMemo<PhotoItem[]>(() => {
@@ -201,6 +312,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
   const openLightbox = useCallback(
     (list: PhotoItem[], index: number) => {
       setLightboxImgLoaded(false);
+      setLightboxRetryStage(0);
       setLightboxState({ list, index });
       onModalStateChange?.(true);
     },
@@ -235,6 +347,15 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
     setExpandedCountMap((prev) => ({ ...prev, [category]: INITIAL_ALBUM_COUNT }));
   };
 
+  // 收合所有已展開的相簿
+  const hasAnyExpanded = useMemo(() => {
+    return Object.values(expandedCountMap).some((count) => count > INITIAL_ALBUM_COUNT);
+  }, [expandedCountMap]);
+
+  const handleCollapseAll = () => {
+    setExpandedCountMap({});
+  };
+
   // 鎖定背景捲動並攔截鍵盤方向鍵 (Capture 階段 + stopImmediatePropagation 確保不觸發外層翻頁)
   useEffect(() => {
     if (!lightboxState) return;
@@ -251,6 +372,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
         e.preventDefault();
         e.stopImmediatePropagation();
         setLightboxImgLoaded(false);
+        setLightboxRetryStage(0);
         setLightboxState((prev) =>
           prev ? { ...prev, index: (prev.index + 1) % prev.list.length } : null
         );
@@ -258,6 +380,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
         e.preventDefault();
         e.stopImmediatePropagation();
         setLightboxImgLoaded(false);
+        setLightboxRetryStage(0);
         setLightboxState((prev) =>
           prev
             ? { ...prev, index: (prev.index - 1 + prev.list.length) % prev.list.length }
@@ -272,21 +395,6 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
     };
   }, [lightboxState, closeLightbox]);
-
-  const handleImageLoad = (id: string | number) => {
-    setLoadedMap((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
-  };
-
-  const handleImageError = (id: string | number) => {
-    setRetryStageMap((prev) => {
-      const current = prev[id] || 0;
-      if (current >= 3) {
-        setLoadedMap((lPrev) => ({ ...lPrev, [id]: true }));
-        return prev;
-      }
-      return { ...prev, [id]: current + 1 };
-    });
-  };
 
   return (
     <section id="photos" className="py-12 md:py-20">
@@ -314,54 +422,70 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
               <span>正在從雲端硬碟讀取相簿與照片...</span>
             </div>
 
-            <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
-              {[240, 320, 200, 280, 220, 300].map((height, idx) => (
-                <div
-                  key={idx}
-                  style={{ height: `${height}px` }}
-                  className="break-inside-avoid rounded-2xl bg-slate-100 dark:bg-slate-900 animate-pulse border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-center"
-                >
-                  <Camera className="w-6 h-6 text-slate-300 dark:text-slate-700" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 items-start">
+              {[0, 1, 2].map((col) => (
+                <div key={col} className="flex flex-col gap-4">
+                  {[240 + col * 30, 280 - col * 20].map((height, idx) => (
+                    <div
+                      key={idx}
+                      style={{ height: `${height}px` }}
+                      className="rounded-2xl bg-slate-100 dark:bg-slate-900 animate-pulse border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-center"
+                    >
+                      <Camera className="w-6 h-6 text-slate-300 dark:text-slate-700" />
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
           </div>
         ) : (
           <>
-            {/* Folder Category Tabs */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-2">
-              {categories.map((cat) => {
-                const active = selectedCategory === cat.name;
-                return (
-                  <button
-                    key={cat.name}
-                    onClick={() => {
-                      setSelectedCategory(cat.name);
-                      closeLightbox();
-                    }}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all whitespace-nowrap inline-flex items-center gap-2 cursor-pointer ${
-                      active
-                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
-                        : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200/80 dark:border-slate-800'
-                    }`}
-                  >
-                    {cat.name !== '全部' && <Folder className="w-3.5 h-3.5 opacity-75" />}
-                    <span>{cat.name}</span>
-                    <span
-                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded-md ${
+            {/* Folder Category Tabs & Collapse All Action */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-2">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                {categories.map((cat) => {
+                  const active = selectedCategory === cat.name;
+                  return (
+                    <button
+                      key={cat.name}
+                      onClick={() => {
+                        setSelectedCategory(cat.name);
+                        closeLightbox();
+                      }}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all whitespace-nowrap inline-flex items-center gap-2 cursor-pointer ${
                         active
-                          ? 'bg-white/20 dark:bg-slate-900/20'
-                          : 'bg-slate-200/70 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200/80 dark:border-slate-800'
                       }`}
                     >
-                      {cat.count}
-                    </span>
-                  </button>
-                );
-              })}
+                      {cat.name !== '全部' && <Folder className="w-3.5 h-3.5 opacity-75" />}
+                      <span>{cat.name}</span>
+                      <span
+                        className={`font-mono text-[10px] px-1.5 py-0.5 rounded-md ${
+                          active
+                            ? 'bg-white/20 dark:bg-slate-900/20'
+                            : 'bg-slate-200/70 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        {cat.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {hasAnyExpanded && (
+                <button
+                  onClick={handleCollapseAll}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <ChevronUp className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>全部收合</span>
+                </button>
+              )}
             </div>
 
-            {/* Album Sections (每個相簿分類預設只顯示部分照片，具備展開/收合機制) */}
+            {/* Album Sections (固定直欄式瀑布流：展開或向下滑動時圖片絕對不會跨欄亂跳閃爍) */}
             <div className="space-y-16">
               {visibleAlbumGroups.map((album) => {
                 const visibleLimit = getVisibleCount(album.category);
@@ -369,10 +493,18 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                 const remainingCount = Math.max(0, album.items.length - visibleLimit);
                 const isExpanded = visibleLimit > INITIAL_ALBUM_COUNT;
 
+                // 將該相簿的照片依序分配到獨立直欄 (Column 0, Column 1, Column 2)
+                const columnBuckets: Array<Array<{ photo: PhotoItem; originalIdx: number }>> =
+                  Array.from({ length: columnsCount }, () => []);
+
+                slicedPhotos.forEach((photo, idx) => {
+                  columnBuckets[idx % columnsCount].push({ photo, originalIdx: idx });
+                });
+
                 return (
                   <div key={album.category} className="space-y-6">
-                    {/* 相簿標題列 */}
-                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                    {/* 相簿標題列 (附帶頂部展開/收合控制，且展開時 Sticky 置頂方便隨時收合) */}
+                    <div className="sticky top-16 z-20 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 py-3">
                       <div className="flex items-center gap-2.5">
                         <Folder className="w-4 h-4 text-emerald-500 shrink-0" />
                         <h3 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">
@@ -380,75 +512,46 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                         </h3>
                       </div>
 
-                      <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                        顯示 {slicedPhotos.length} / 共 {album.count} 張
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                          顯示 {slicedPhotos.length} / 共 {album.count} 張
+                        </span>
+
+                        {remainingCount > 0 && (
+                          <button
+                            onClick={() => handleExpandAll(album.category, album.items.length)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5 text-emerald-500" />
+                            <span>展開全部</span>
+                          </button>
+                        )}
+
+                        {isExpanded && (
+                          <button
+                            onClick={() => handleCollapse(album.category)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                            <span>收合相簿</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
-                    {/* 相簿瀑布流 */}
-                    <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
-                      {slicedPhotos.map((photo, idx) => {
-                        const stage = retryStageMap[photo.id] || 0;
-                        const resolved = getPhotoUrlByStage(photo, 'grid', stage);
-                        const isImgLoaded = Boolean(loadedMap[photo.id]);
-
-                        return (
-                          <div
-                            key={photo.id}
-                            onClick={() => openLightbox(album.items, idx)}
-                            className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-900 cursor-zoom-in shadow-2xs hover:shadow-md transition-all"
-                          >
-                            {/* 單張圖片尚未下載完成時的 Loading 骨架 */}
-                            {!isImgLoaded && (
-                              <div className="w-full min-h-[220px] flex flex-col items-center justify-center gap-2 bg-slate-100 dark:bg-slate-900 animate-pulse py-12">
-                                <Loader2 className="w-5 h-5 text-emerald-500/70 animate-spin" />
-                                <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
-                                  載入中...
-                                </span>
-                              </div>
-                            )}
-
-                            <img
-                              src={resolved.url}
-                              alt={photo.title || '攝影作品'}
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                              onLoad={() => handleImageLoad(photo.id)}
-                              onError={() => handleImageError(photo.id)}
-                              className={`w-full h-auto block object-cover group-hover:scale-[1.03] transition-all duration-500 ease-out ${
-                                isImgLoaded ? 'opacity-100' : 'opacity-0 h-0'
-                              }`}
+                    {/* 固定直欄式瀑布流 (Stable Multi-Column Waterfall) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 items-start">
+                      {columnBuckets.map((bucket, colIdx) => (
+                        <div key={colIdx} className="flex flex-col gap-4">
+                          {bucket.map(({ photo, originalIdx }) => (
+                            <PhotoCard
+                              key={photo.id}
+                              photo={photo}
+                              onClick={() => openLightbox(album.items, originalIdx)}
                             />
-
-                            {/* 滑鼠移上去時顯示標題與說明 (Hover Overlay) */}
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-4">
-                              <div className="flex items-end justify-between gap-3">
-                                <div className="space-y-1 min-w-0">
-                                  {photo.title && (
-                                    <div className="text-sm font-bold text-white truncate">
-                                      {photo.title}
-                                    </div>
-                                  )}
-                                  {photo.description && (
-                                    <p className="text-xs text-slate-200/95 line-clamp-3 leading-relaxed">
-                                      {photo.description}
-                                    </p>
-                                  )}
-                                  {!photo.title && !photo.description && (
-                                    <span className="text-xs font-medium text-white/90">
-                                      {photo.category || '點擊放大檢視'}
-                                    </span>
-                                  )}
-                                </div>
-
-                                <span className="p-2 rounded-xl bg-slate-900/70 text-white backdrop-blur-xs shrink-0">
-                                  <Maximize2 className="w-3.5 h-3.5" />
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                          ))}
+                        </div>
+                      ))}
                     </div>
 
                     {/* 展開更多 / 展開全部 / 收合 按鈕列 */}
@@ -498,14 +601,13 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
 
       </div>
 
-      {/* Fullscreen Lightbox via Portal (脫離橫向滑動 Track 的 transform 限制，完整覆蓋頂部導覽列) */}
+      {/* Fullscreen Lightbox via Portal */}
       {activePhoto &&
         lightboxState !== null &&
         typeof document !== 'undefined' &&
         createPortal(
           (() => {
-            const stage = retryStageMap[activePhoto.id] || 0;
-            const resolvedFull = getPhotoUrlByStage(activePhoto, 'full', stage);
+            const resolvedFull = getPhotoUrlByStage(activePhoto, 'full', lightboxRetryStage);
 
             return (
               <div
@@ -554,6 +656,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                       onClick={(e) => {
                         e.stopPropagation();
                         setLightboxImgLoaded(false);
+                        setLightboxRetryStage(0);
                         setLightboxState((prev) =>
                           prev
                             ? {
@@ -574,6 +677,7 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                       onClick={(e) => {
                         e.stopPropagation();
                         setLightboxImgLoaded(false);
+                        setLightboxRetryStage(0);
                         setLightboxState((prev) =>
                           prev ? { ...prev, index: (prev.index + 1) % prev.list.length } : null
                         );
@@ -605,8 +709,13 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                     referrerPolicy="no-referrer"
                     onLoad={() => setLightboxImgLoaded(true)}
                     onError={() => {
-                      handleImageError(activePhoto.id);
-                      setLightboxImgLoaded(true);
+                      setLightboxRetryStage((prev) => {
+                        if (prev >= 3) {
+                          setLightboxImgLoaded(true);
+                          return prev;
+                        }
+                        return prev + 1;
+                      });
                     }}
                     className={`max-w-[90vw] max-h-[72vh] w-auto h-auto object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${
                       lightboxImgLoaded ? 'opacity-100' : 'opacity-0'
