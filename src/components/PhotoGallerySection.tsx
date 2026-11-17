@@ -8,6 +8,10 @@ import {
   ChevronRight,
   ExternalLink,
   Folder,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Calendar,
 } from 'lucide-react';
 import { PhotoItem } from '../types';
 
@@ -16,6 +20,10 @@ interface PhotoGallerySectionProps {
   isLoading?: boolean;
   onModalStateChange?: (isOpen: boolean) => void;
 }
+
+// 每個相簿預設顯示張數與每次展開增加張數
+const INITIAL_ALBUM_COUNT = 6;
+const LOAD_MORE_STEP = 6;
 
 // 簡潔的預設預覽圖 (當沒有圖片或圖片無法載入時顯示)
 const DEFAULT_PREVIEW_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -48,7 +56,12 @@ export function extractGoogleDriveFileId(input: string): string | null {
   if (idParamMatch && idParamMatch[1]) return idParamMatch[1];
 
   // 4. 若本身不是網址 (不含 http / 斜線)，且符合 Google Drive ID 格式
-  if (!trimmed.startsWith('http') && !trimmed.startsWith('data:') && !trimmed.includes('/') && /^[a-zA-Z0-9_-]{15,}$/.test(trimmed)) {
+  if (
+    !trimmed.startsWith('http') &&
+    !trimmed.startsWith('data:') &&
+    !trimmed.includes('/') &&
+    /^[a-zA-Z0-9_-]{15,}$/.test(trimmed)
+  ) {
     return trimmed;
   }
 
@@ -66,11 +79,13 @@ export function getPhotoUrlByStage(
   url: string;
   originalDriveViewUrl: string | null;
 } {
-  const rawSource = photo.driveUrlOrId || (photo as unknown as { url?: string }).url || String(photo.id || '');
+  const rawSource =
+    photo.driveUrlOrId || (photo as unknown as { url?: string }).url || String(photo.id || '');
   const fileId = extractGoogleDriveFileId(rawSource);
 
   if (fileId) {
-    const width = size === 'full' ? 'w2000' : 'w1000';
+    // 縮圖使用 w800 加速瀑布流載入，放大檢視使用 w2000 高畫質
+    const width = size === 'full' ? 'w2000' : 'w800';
     const originalDriveViewUrl = `https://drive.google.com/file/d/${fileId}/view`;
 
     if (stage === 0) {
@@ -116,35 +131,56 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
   onModalStateChange,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
-  const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
+  // 每個相簿分類目前已展開顯示的張數
+  const [expandedCountMap, setExpandedCountMap] = useState<Record<string, number>>({});
+  // 單張圖片是否已載入完成 (避免未載入前高度塌陷或突兀跳出)
+  const [loadedMap, setLoadedMap] = useState<Record<string | number, boolean>>({});
   // 記錄每張照片的重試階段 (0 -> 1 -> 2 -> 3 預設預覽圖)
   const [retryStageMap, setRetryStageMap] = useState<Record<string | number, number>>({});
 
-  // 當完全沒有照片時，提供一張預設的簡單預覽圖
+  // Lightbox 狀態：紀錄當前預覽的照片清單與索引
+  const [lightboxState, setLightboxState] = useState<{
+    list: PhotoItem[];
+    index: number;
+  } | null>(null);
+  const [lightboxImgLoaded, setLightboxImgLoaded] = useState<boolean>(false);
+
+  // 當完全沒有照片且非載入中時，提供一張預設的簡單預覽圖
   const displayPhotos = useMemo<PhotoItem[]>(() => {
     if (photos && photos.length > 0) return photos;
     return [
       {
         id: 'fallback-default',
         title: '預設預覽',
+        description: '目前尚無相簿照片，此為預設預覽圖',
         driveUrlOrId: DEFAULT_PREVIEW_SVG,
         category: '預設相簿',
       },
     ];
   }, [photos]);
 
-  // 依資料夾分類列表與數量統計
-  const categories = useMemo(() => {
-    const counts: Record<string, number> = {};
+  // 依資料夾分類分組
+  const albumGroups = useMemo(() => {
+    const groups: Record<string, PhotoItem[]> = {};
     displayPhotos.forEach((p) => {
       const cat = p.category || '未分類';
-      counts[cat] = (counts[cat] || 0) + 1;
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(p);
     });
+    return Object.entries(groups).map(([category, items]) => ({
+      category,
+      count: items.length,
+      items,
+    }));
+  }, [displayPhotos]);
+
+  // 頂部相簿分類標籤
+  const categories = useMemo(() => {
     return [
       { name: '全部', count: displayPhotos.length },
-      ...Object.entries(counts).map(([name, count]) => ({ name, count })),
+      ...albumGroups.map((g) => ({ name: g.category, count: g.count })),
     ];
-  }, [displayPhotos]);
+  }, [displayPhotos.length, albumGroups]);
 
   // 若當前選擇的資料夾在新資料中不存在，自動切回「全部」
   useEffect(() => {
@@ -153,30 +189,55 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
     }
   }, [categories, selectedCategory]);
 
-  // 篩選後照片清單
-  const filteredPhotos = useMemo(() => {
-    if (selectedCategory === '全部') return displayPhotos;
-    return displayPhotos.filter((p) => (p.category || '未分類') === selectedCategory);
-  }, [displayPhotos, selectedCategory]);
+  // 要顯示的相簿清單 (若選「全部」則顯示各相簿區塊，若選單一相簿則只顯示該相簿)
+  const visibleAlbumGroups = useMemo(() => {
+    if (selectedCategory === '全部') return albumGroups;
+    return albumGroups.filter((g) => g.category === selectedCategory);
+  }, [albumGroups, selectedCategory]);
 
-  const activePhoto = activePhotoIndex !== null ? filteredPhotos[activePhotoIndex] : null;
+  const activePhoto =
+    lightboxState !== null ? lightboxState.list[lightboxState.index] || null : null;
 
   const openLightbox = useCallback(
-    (idx: number) => {
-      setActivePhotoIndex(idx);
+    (list: PhotoItem[], index: number) => {
+      setLightboxImgLoaded(false);
+      setLightboxState({ list, index });
       onModalStateChange?.(true);
     },
     [onModalStateChange]
   );
 
   const closeLightbox = useCallback(() => {
-    setActivePhotoIndex(null);
+    setLightboxState(null);
     onModalStateChange?.(false);
   }, [onModalStateChange]);
 
+  // 取得某相簿目前應該顯示幾張照片
+  const getVisibleCount = (category: string) => {
+    return expandedCountMap[category] || INITIAL_ALBUM_COUNT;
+  };
+
+  // 展開更多 (+6 張)
+  const handleExpandMore = (category: string, total: number) => {
+    setExpandedCountMap((prev) => {
+      const current = prev[category] || INITIAL_ALBUM_COUNT;
+      return { ...prev, [category]: Math.min(current + LOAD_MORE_STEP, total) };
+    });
+  };
+
+  // 展開全部
+  const handleExpandAll = (category: string, total: number) => {
+    setExpandedCountMap((prev) => ({ ...prev, [category]: total }));
+  };
+
+  // 收合回預設張數
+  const handleCollapse = (category: string) => {
+    setExpandedCountMap((prev) => ({ ...prev, [category]: INITIAL_ALBUM_COUNT }));
+  };
+
   // 鎖定背景捲動並攔截鍵盤方向鍵 (Capture 階段 + stopImmediatePropagation 確保不觸發外層翻頁)
   useEffect(() => {
-    if (activePhotoIndex === null) return;
+    if (!lightboxState) return;
 
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -189,14 +250,18 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         e.stopImmediatePropagation();
-        setActivePhotoIndex((prev) =>
-          prev !== null ? (prev + 1) % filteredPhotos.length : null
+        setLightboxImgLoaded(false);
+        setLightboxState((prev) =>
+          prev ? { ...prev, index: (prev.index + 1) % prev.list.length } : null
         );
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         e.stopImmediatePropagation();
-        setActivePhotoIndex((prev) =>
-          prev !== null ? (prev - 1 + filteredPhotos.length) % filteredPhotos.length : null
+        setLightboxImgLoaded(false);
+        setLightboxState((prev) =>
+          prev
+            ? { ...prev, index: (prev.index - 1 + prev.list.length) % prev.list.length }
+            : null
         );
       }
     };
@@ -206,12 +271,19 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
       document.body.style.overflow = originalOverflow;
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
     };
-  }, [activePhotoIndex, filteredPhotos.length, closeLightbox]);
+  }, [lightboxState, closeLightbox]);
+
+  const handleImageLoad = (id: string | number) => {
+    setLoadedMap((prev) => (prev[id] ? prev : { ...prev, [id]: true }));
+  };
 
   const handleImageError = (id: string | number) => {
     setRetryStageMap((prev) => {
       const current = prev[id] || 0;
-      if (current >= 3) return prev;
+      if (current >= 3) {
+        setLoadedMap((lPrev) => ({ ...lPrev, [id]: true }));
+        return prev;
+      }
       return { ...prev, [id]: current + 1 };
     });
   };
@@ -230,94 +302,205 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
             攝影分享
           </h2>
           <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 mt-2 max-w-2xl leading-relaxed">
-            記錄日常街景、自然光影與旅途瞬間。依相簿資料夾分類，點擊照片可全螢幕放大檢視。
+            記錄日常街景、自然光影與旅途瞬間。依相簿資料夾分類，滑鼠移至照片或點擊放大可查看拍攝說明。
           </p>
         </div>
 
-        {/* Folder Category Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2">
-          {categories.map((cat) => {
-            const active = selectedCategory === cat.name;
-            return (
-              <button
-                key={cat.name}
-                onClick={() => {
-                  setSelectedCategory(cat.name);
-                  closeLightbox();
-                }}
-                className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all whitespace-nowrap inline-flex items-center gap-2 cursor-pointer ${
-                  active
-                    ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200/80 dark:border-slate-800'
-                }`}
-              >
-                {cat.name !== '全部' && <Folder className="w-3.5 h-3.5 opacity-75" />}
-                <span>{cat.name}</span>
-                <span
-                  className={`font-mono text-[10px] px-1.5 py-0.5 rounded-md ${
-                    active
-                      ? 'bg-white/20 dark:bg-slate-900/20'
-                      : 'bg-slate-200/70 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  {cat.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        {/* 1. API 載入中狀態 (Loading Banner + 骨架屏) */}
+        {isLoading ? (
+          <div className="space-y-6">
+            <div className="flex items-center justify-center gap-3 py-6 px-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 text-sm text-slate-600 dark:text-slate-300">
+              <Loader2 className="w-4 h-4 text-emerald-500 animate-spin shrink-0" />
+              <span>正在從雲端硬碟讀取相簿與照片...</span>
+            </div>
 
-        {/* Masonry Waterfall Album Grid (純相簿瀑布流，不顯示卡片文字框) */}
-        {isLoading && photos.length === 0 ? (
-          <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
-            {[1, 2, 3].map((n) => (
-              <div
-                key={n}
-                className="break-inside-avoid rounded-2xl aspect-[4/3] bg-slate-100 dark:bg-slate-900 animate-pulse border border-slate-200 dark:border-slate-800"
-              />
-            ))}
+            <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
+              {[240, 320, 200, 280, 220, 300].map((height, idx) => (
+                <div
+                  key={idx}
+                  style={{ height: `${height}px` }}
+                  className="break-inside-avoid rounded-2xl bg-slate-100 dark:bg-slate-900 animate-pulse border border-slate-200/80 dark:border-slate-800/80 flex items-center justify-center"
+                >
+                  <Camera className="w-6 h-6 text-slate-300 dark:text-slate-700" />
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
-          <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
-            {filteredPhotos.map((photo, idx) => {
-              const stage = retryStageMap[photo.id] || 0;
-              const resolved = getPhotoUrlByStage(photo, 'grid', stage);
-
-              return (
-                <div
-                  key={photo.id}
-                  onClick={() => openLightbox(idx)}
-                  className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-900 cursor-zoom-in shadow-2xs hover:shadow-md transition-all"
-                >
-                  <img
-                    src={resolved.url}
-                    alt={photo.title || '攝影作品'}
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                    onError={() => handleImageError(photo.id)}
-                    className="w-full h-auto block object-cover group-hover:scale-[1.03] transition-transform duration-500 ease-out"
-                  />
-
-                  {/* Subtle Hover Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-between p-3.5">
-                    <span className="text-xs font-medium text-white/95 truncate pr-2">
-                      {photo.category || ''}
+          <>
+            {/* Folder Category Tabs */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-2">
+              {categories.map((cat) => {
+                const active = selectedCategory === cat.name;
+                return (
+                  <button
+                    key={cat.name}
+                    onClick={() => {
+                      setSelectedCategory(cat.name);
+                      closeLightbox();
+                    }}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all whitespace-nowrap inline-flex items-center gap-2 cursor-pointer ${
+                      active
+                        ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 border border-slate-200/80 dark:border-slate-800'
+                    }`}
+                  >
+                    {cat.name !== '全部' && <Folder className="w-3.5 h-3.5 opacity-75" />}
+                    <span>{cat.name}</span>
+                    <span
+                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded-md ${
+                        active
+                          ? 'bg-white/20 dark:bg-slate-900/20'
+                          : 'bg-slate-200/70 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                      }`}
+                    >
+                      {cat.count}
                     </span>
-                    <span className="p-1.5 rounded-lg bg-slate-900/60 text-white backdrop-blur-xs shrink-0">
-                      <Maximize2 className="w-3.5 h-3.5" />
-                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Album Sections (每個相簿分類預設只顯示部分照片，具備展開/收合機制) */}
+            <div className="space-y-16">
+              {visibleAlbumGroups.map((album) => {
+                const visibleLimit = getVisibleCount(album.category);
+                const slicedPhotos = album.items.slice(0, visibleLimit);
+                const remainingCount = Math.max(0, album.items.length - visibleLimit);
+                const isExpanded = visibleLimit > INITIAL_ALBUM_COUNT;
+
+                return (
+                  <div key={album.category} className="space-y-6">
+                    {/* 相簿標題列 */}
+                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <Folder className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <h3 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">
+                          {album.category}
+                        </h3>
+                      </div>
+
+                      <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                        顯示 {slicedPhotos.length} / 共 {album.count} 張
+                      </span>
+                    </div>
+
+                    {/* 相簿瀑布流 */}
+                    <div className="columns-1 sm:columns-2 md:columns-3 gap-4 space-y-4">
+                      {slicedPhotos.map((photo, idx) => {
+                        const stage = retryStageMap[photo.id] || 0;
+                        const resolved = getPhotoUrlByStage(photo, 'grid', stage);
+                        const isImgLoaded = Boolean(loadedMap[photo.id]);
+
+                        return (
+                          <div
+                            key={photo.id}
+                            onClick={() => openLightbox(album.items, idx)}
+                            className="group relative break-inside-avoid rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-900 cursor-zoom-in shadow-2xs hover:shadow-md transition-all"
+                          >
+                            {/* 單張圖片尚未下載完成時的 Loading 骨架 */}
+                            {!isImgLoaded && (
+                              <div className="w-full min-h-[220px] flex flex-col items-center justify-center gap-2 bg-slate-100 dark:bg-slate-900 animate-pulse py-12">
+                                <Loader2 className="w-5 h-5 text-emerald-500/70 animate-spin" />
+                                <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+                                  載入中...
+                                </span>
+                              </div>
+                            )}
+
+                            <img
+                              src={resolved.url}
+                              alt={photo.title || '攝影作品'}
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                              onLoad={() => handleImageLoad(photo.id)}
+                              onError={() => handleImageError(photo.id)}
+                              className={`w-full h-auto block object-cover group-hover:scale-[1.03] transition-all duration-500 ease-out ${
+                                isImgLoaded ? 'opacity-100' : 'opacity-0 h-0'
+                              }`}
+                            />
+
+                            {/* 滑鼠移上去時顯示標題與說明 (Hover Overlay) */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-4">
+                              <div className="flex items-end justify-between gap-3">
+                                <div className="space-y-1 min-w-0">
+                                  {photo.title && (
+                                    <div className="text-sm font-bold text-white truncate">
+                                      {photo.title}
+                                    </div>
+                                  )}
+                                  {photo.description && (
+                                    <p className="text-xs text-slate-200/95 line-clamp-3 leading-relaxed">
+                                      {photo.description}
+                                    </p>
+                                  )}
+                                  {!photo.title && !photo.description && (
+                                    <span className="text-xs font-medium text-white/90">
+                                      {photo.category || '點擊放大檢視'}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <span className="p-2 rounded-xl bg-slate-900/70 text-white backdrop-blur-xs shrink-0">
+                                  <Maximize2 className="w-3.5 h-3.5" />
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 展開更多 / 展開全部 / 收合 按鈕列 */}
+                    {(remainingCount > 0 || isExpanded) && (
+                      <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                        {remainingCount > 0 && (
+                          <>
+                            <button
+                              onClick={() => handleExpandMore(album.category, album.items.length)}
+                              className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-white transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                              <span>
+                                展開更多照片 (+{Math.min(LOAD_MORE_STEP, remainingCount)} 張 · 尚有{' '}
+                                {remainingCount} 張)
+                              </span>
+                            </button>
+
+                            {remainingCount > LOAD_MORE_STEP && (
+                              <button
+                                onClick={() => handleExpandAll(album.category, album.items.length)}
+                                className="px-4 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <span>展開全部 ({album.items.length} 張)</span>
+                              </button>
+                            )}
+                          </>
+                        )}
+
+                        {isExpanded && (
+                          <button
+                            onClick={() => handleCollapse(album.category)}
+                            className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                            <span>收合相簿</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
 
       </div>
 
       {/* Fullscreen Lightbox via Portal (脫離橫向滑動 Track 的 transform 限制，完整覆蓋頂部導覽列) */}
       {activePhoto &&
-        activePhotoIndex !== null &&
+        lightboxState !== null &&
         typeof document !== 'undefined' &&
         createPortal(
           (() => {
@@ -326,20 +509,20 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
 
             return (
               <div
-                className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-4 sm:p-8 select-none"
+                className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-between p-4 sm:p-6 select-none"
                 onClick={closeLightbox}
               >
                 {/* Top Control Bar */}
                 <div
-                  className="fixed top-4 left-4 right-4 z-[110] flex items-center justify-between pointer-events-none"
+                  className="w-full max-w-6xl flex items-center justify-between z-[110]"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-mono text-slate-300 pointer-events-auto">
-                    {activePhotoIndex + 1} / {filteredPhotos.length}
+                  <div className="px-3.5 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-mono text-slate-300">
+                    {lightboxState.index + 1} / {lightboxState.list.length}
                     {activePhoto.category ? ` · ${activePhoto.category}` : ''}
                   </div>
 
-                  <div className="flex items-center gap-2 pointer-events-auto">
+                  <div className="flex items-center gap-2">
                     {resolvedFull.originalDriveViewUrl && (
                       <a
                         href={resolvedFull.originalDriveViewUrl}
@@ -365,13 +548,19 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                 </div>
 
                 {/* Prev / Next Navigation Buttons */}
-                {filteredPhotos.length > 1 && (
+                {lightboxState.list.length > 1 && (
                   <>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setActivePhotoIndex(
-                          (activePhotoIndex - 1 + filteredPhotos.length) % filteredPhotos.length
+                        setLightboxImgLoaded(false);
+                        setLightboxState((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                index: (prev.index - 1 + prev.list.length) % prev.list.length,
+                              }
+                            : null
                         );
                       }}
                       className="fixed left-3 sm:left-6 top-1/2 -translate-y-1/2 z-[110] p-3 rounded-full bg-slate-900/80 text-slate-200 hover:text-white hover:bg-slate-800 border border-slate-700/80 transition-colors cursor-pointer shadow-lg"
@@ -384,7 +573,10 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setActivePhotoIndex((activePhotoIndex + 1) % filteredPhotos.length);
+                        setLightboxImgLoaded(false);
+                        setLightboxState((prev) =>
+                          prev ? { ...prev, index: (prev.index + 1) % prev.list.length } : null
+                        );
                       }}
                       className="fixed right-3 sm:right-6 top-1/2 -translate-y-1/2 z-[110] p-3 rounded-full bg-slate-900/80 text-slate-200 hover:text-white hover:bg-slate-800 border border-slate-700/80 transition-colors cursor-pointer shadow-lg"
                       title="下一張 (→)"
@@ -395,19 +587,58 @@ export const PhotoGallerySection: React.FC<PhotoGallerySectionProps> = ({
                   </>
                 )}
 
-                {/* Centered Full Image */}
+                {/* Centered Full Image with Loading Spinner */}
                 <div
-                  className="relative max-w-[92vw] max-h-[85vh] flex items-center justify-center"
+                  className="relative flex-1 w-full flex items-center justify-center my-2 overflow-hidden"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {!lightboxImgLoaded && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400">
+                      <Loader2 className="w-7 h-7 text-emerald-500 animate-spin" />
+                      <span className="text-xs font-mono">載入高畫質影像中...</span>
+                    </div>
+                  )}
+
                   <img
                     src={resolvedFull.url}
                     alt={activePhoto.title || '攝影作品'}
                     referrerPolicy="no-referrer"
-                    onError={() => handleImageError(activePhoto.id)}
-                    className="max-w-[92vw] max-h-[85vh] w-auto h-auto object-contain rounded-lg shadow-2xl"
+                    onLoad={() => setLightboxImgLoaded(true)}
+                    onError={() => {
+                      handleImageError(activePhoto.id);
+                      setLightboxImgLoaded(true);
+                    }}
+                    className={`max-w-[90vw] max-h-[72vh] w-auto h-auto object-contain rounded-xl shadow-2xl transition-opacity duration-300 ${
+                      lightboxImgLoaded ? 'opacity-100' : 'opacity-0'
+                    }`}
                   />
                 </div>
+
+                {/* Bottom Caption & Description Box (點開後顯示說明與標題) */}
+                {(activePhoto.title || activePhoto.description || activePhoto.date) && (
+                  <div
+                    className="w-full max-w-3xl rounded-2xl bg-slate-900/90 border border-slate-800/90 px-5 py-4 text-slate-200 z-[110] backdrop-blur-md"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
+                      {activePhoto.title && (
+                        <h4 className="text-base font-bold text-white">{activePhoto.title}</h4>
+                      )}
+                      {activePhoto.date && (
+                        <span className="text-xs font-mono text-slate-400 inline-flex items-center gap-1 shrink-0">
+                          <Calendar className="w-3 h-3 text-emerald-400" />
+                          <span>{activePhoto.date}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {activePhoto.description && (
+                      <p className="mt-1.5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line max-h-28 overflow-y-auto">
+                        {activePhoto.description}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })(),
